@@ -17,6 +17,7 @@ export async function scrapeLinkedInLeads(searchQuery, maxLeads = 10, userId) {
   const page = await context.newPage();
   page.setDefaultTimeout(90000);
   page.setDefaultNavigationTimeout(90000);
+  const limit = maxLeads || 10;
   const leads = [];
 
   try {
@@ -105,7 +106,7 @@ export async function scrapeLinkedInLeads(searchQuery, maxLeads = 10, userId) {
       timeout: 90000,
     });
     await page.waitForTimeout(5000);
-    
+
     console.log("Search page loaded");
     // Print all class names on page for debugging
     const classList = await page.evaluate(() => {
@@ -122,160 +123,114 @@ export async function scrapeLinkedInLeads(searchQuery, maxLeads = 10, userId) {
     let scrapedCount = 0;
 
     while (scrapedCount < maxLeads) {
-      // Wait for results container — try multiple possible selectors
-      let resultsSelector = null;
+      // Wait for any list items to appear
+      await page.waitForTimeout(3000);
 
-      const selectors = [
-        "li.reusable-search__result-container",
-        'li[data-view-name="search-entity-result-universal-template"]',
-        ".search-results-container ul li",
-        "ul.reusable-search__entity-result-list li",
-        "li.artdeco-list__item",
-        ".entity-result__item",
-        "div.entity-result",
-      ];
+      // Use evaluate to extract all lead data directly from the page DOM
+      const extractedLeads = await page.evaluate(() => {
+        const results = [];
 
-      for (const selector of selectors) {
-        const found = await page.$(selector);
-        if (found) {
-          resultsSelector = selector;
-          console.log("Found results using selector:", selector);
-          break;
-        }
-      }
+        // Find all links that point to LinkedIn profiles
+        const profileLinks = document.querySelectorAll('a[href*="/in/"]');
 
-      if (!resultsSelector) {
-        console.log("No results selector found — taking screenshot for debug");
-        await page.screenshot({ path: "debug-screenshot.png" });
-        console.log(
-          "Screenshot saved as debug-screenshot.png in backend folder",
-        );
-        break;
-      }
+        profileLinks.forEach((link) => {
+          const href = link.getAttribute("href") || "";
 
-      const results = await page.$$(resultsSelector);
-      console.log("Found " + results.length + " results on this page");
+          // Only process actual profile links not nav links
+          if (!href.includes("/in/") || href.includes("/in/feed")) return;
 
-      for (const result of results) {
-        if (scrapedCount >= maxLeads) break;
+          // Clean the URL
+          const linkedinUrl = href.split("?")[0];
+
+          // Skip duplicates in this batch
+          if (results.find((r) => r.linkedinUrl === linkedinUrl)) return;
+
+          // Try to get the name from the link text
+          let name = "";
+          const spans = link.querySelectorAll('span[aria-hidden="true"]');
+          if (spans.length > 0) {
+            name = spans[0].innerText.trim();
+          }
+          if (!name) {
+            name = link.innerText.trim().split("\n")[0].trim();
+          }
+
+          // Skip if no name or is LinkedIn Member
+          if (!name || name === "LinkedIn Member" || name.length < 2) return;
+
+          // Try to find the parent container to get more info
+          let title = "";
+          let company = "";
+          let location = "";
+
+          // Walk up the DOM to find the result container
+          let container = link.parentElement;
+          for (let i = 0; i < 8; i++) {
+            if (!container) break;
+            const text = container.innerText || "";
+            const lines = text
+              .split("\n")
+              .map((l) => l.trim())
+              .filter((l) => l.length > 2);
+
+            if (lines.length >= 2) {
+              // First line is usually name, second is title
+              if (lines[1] && lines[1] !== name) title = lines[1];
+              if (lines[2] && lines[2] !== name && lines[2] !== title)
+                company = lines[2];
+              if (
+                lines[3] &&
+                lines[3] !== name &&
+                lines[3] !== title &&
+                lines[3] !== company
+              )
+                location = lines[3];
+              break;
+            }
+            container = container.parentElement;
+          }
+
+          results.push({ name, title, company, location, linkedinUrl });
+        });
+
+        return results;
+      });
+
+      console.log(
+        "Extracted " + extractedLeads.length + " potential leads from page",
+      );
+
+      for (const leadData of extractedLeads) {
+        if (scrapedCount >= limit) break;
+
+        console.log("Processing: " + leadData.name + " | " + leadData.title);
 
         try {
-          // Try multiple name selectors
-          let name = "";
-          const nameSelectors = [
-            '.entity-result__title-text a span[aria-hidden="true"]',
-            '.entity-result__title-line span[aria-hidden="true"]',
-            "span.entity-result__title-text a span",
-            'a.app-aware-link span[aria-hidden="true"]',
-            '[data-anonymize="person-name"]',
-            'span[aria-hidden="true"]',
-          ];
-          for (const sel of nameSelectors) {
-            const el = await result.$(sel);
-            if (el) {
-              name = (await el.innerText()).trim();
-              if (name && name !== "LinkedIn Member") break;
-            }
-          }
-
-          // Try multiple title selectors
-          let title = "";
-          const titleSelectors = [
-            ".entity-result__primary-subtitle",
-            ".entity-result__summary--2-lines",
-            '[data-anonymize="headline"]',
-            ".entity-result__secondary-subtitle",
-          ];
-          for (const sel of titleSelectors) {
-            const el = await result.$(sel);
-            if (el) {
-              title = (await el.innerText()).trim();
-              if (title) break;
-            }
-          }
-
-          // Try multiple company selectors
-          let company = "";
-          const companySelectors = [
-            ".entity-result__secondary-subtitle",
-            '[data-anonymize="company-name"]',
-          ];
-          for (const sel of companySelectors) {
-            const el = await result.$(sel);
-            if (el) {
-              company = (await el.innerText()).trim();
-              if (company) break;
-            }
-          }
-
-          // Try multiple location selectors
-          let location = "";
-          const locationSelectors = [
-            ".entity-result__tertiary-subtitle",
-            '[data-anonymize="location"]',
-          ];
-          for (const sel of locationSelectors) {
-            const el = await result.$(sel);
-            if (el) {
-              location = (await el.innerText()).trim();
-              if (location) break;
-            }
-          }
-
-          // Try multiple link selectors
-          let linkedinUrl = "";
-          const linkSelectors = [
-            'a[href*="/in/"]',
-            ".entity-result__title-text a",
-            'a.app-aware-link[href*="/in/"]',
-          ];
-          for (const sel of linkSelectors) {
-            const el = await result.$(sel);
-            if (el) {
-              const href = await el.getAttribute("href");
-              if (href && href.includes("/in/")) {
-                linkedinUrl = href.split("?")[0];
-                break;
-              }
-            }
-          }
-
-          if (!name || name === "LinkedIn Member") {
-            console.log("Skipping — no valid name found");
-            continue;
-          }
-
-          console.log("Found: " + name + " | " + title + " | " + company);
-
-          const leadData = {
-            name,
-            title,
-            company,
-            location,
-            linkedinUrl,
+          const exists = await Lead.findOne({
+            linkedinUrl: leadData.linkedinUrl,
             userId,
-            status: "new",
-          };
+          });
 
-          const exists = await Lead.findOne({ linkedinUrl, userId });
-          if (!exists && linkedinUrl) {
-            const lead = new Lead(leadData);
+          if (!exists && leadData.linkedinUrl) {
+            const lead = new Lead({
+              ...leadData,
+              userId,
+              status: "new",
+            });
             await lead.save();
             leads.push(leadData);
             scrapedCount++;
-            console.log("Lead " + scrapedCount + " saved: " + name);
+            console.log("✅ Lead " + scrapedCount + " saved: " + leadData.name);
           } else {
-            console.log("Duplicate or no URL — skipping: " + name);
+            console.log("⚠️ Duplicate — skipping: " + leadData.name);
           }
         } catch (err) {
-          console.log("Error extracting lead:", err.message);
-          continue;
+          console.log("Error saving lead:", err.message);
         }
-
-        await page.waitForTimeout(800);
       }
 
-      if (scrapedCount < maxLeads) {
+      // Go to next page
+      if (scrapedCount < limit) {
         const nextBtn = await page.$('button[aria-label="Next"]');
         if (nextBtn) {
           await nextBtn.click();

@@ -12,16 +12,23 @@ const transporter = nodemailer.createTransport({
 });
 
 // Verify transporter connection
-transporter.verify((error) => {
+transporter.verify((error, success) => {
   if (error) {
-    console.error("❌ Email transporter error:", error.message);
+    console.error("Email transporter error:", error.message);
+    console.error("EMAIL_USER:", process.env.EMAIL_USER);
+    console.error(
+      "EMAIL_PASS set:",
+      process.env.EMAIL_PASS
+        ? "YES (" + process.env.EMAIL_PASS.length + " chars)"
+        : "NO",
+    );
   } else {
-    console.log("✅ Email transporter ready");
+    console.log("Email transporter ready");
   }
 });
 
 export async function sendOutreachEmail(messageId) {
-  console.log(`📧 Sending email for message: ${messageId}`);
+  console.log(`Sending email for message: ${messageId}`);
 
   // Fetch message with lead details
   const message = await Message.findById(messageId).populate("lead");
@@ -65,17 +72,17 @@ export async function sendOutreachEmail(messageId) {
     await message.save();
 
     console.log(
-      `✅ Email sent to ${lead.name} (${lead.email}) — ID: ${info.messageId}`,
+      `Email sent to ${lead.name} (${lead.email}) — ID: ${info.messageId}`,
     );
     return { success: true, messageId: info.messageId };
   } catch (err) {
-    console.error(`❌ Failed to send to ${lead.name}:`, err.message);
+    console.error(`Failed to send to ${lead.name}:`, err.message);
     throw err;
   }
 }
 
 export async function sendBulkEmails(messageIds) {
-  console.log(`📧 Sending ${messageIds.length} emails...`);
+  console.log(`Sending ${messageIds.length} emails...`);
 
   const results = [];
   const errors = [];
@@ -93,7 +100,7 @@ export async function sendBulkEmails(messageIds) {
   }
 
   console.log(
-    `✅ Bulk send complete: ${results.length} sent, ${errors.length} failed`,
+    `Bulk send complete: ${results.length} sent, ${errors.length} failed`,
   );
   return { results, errors };
 }
@@ -148,10 +155,10 @@ ${process.env.EMAIL_USER}`;
     // Update lead status
     await Lead.findByIdAndUpdate(lead._id, { status: "contacted" });
 
-    console.log(`✅ Follow-up sent to ${lead.name}`);
+    console.log(`Follow-up sent to ${lead.name}`);
     return { success: true };
   } catch (err) {
-    console.error(`❌ Follow-up failed for ${lead.name}:`, err.message);
+    console.error(`Follow-up failed for ${lead.name}:`, err.message);
     throw err;
   }
 }
