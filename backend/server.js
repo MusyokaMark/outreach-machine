@@ -46,7 +46,13 @@ app.use(passport.session());
 setupPassport();
 
 mongoose
-  .connect(process.env.MONGO_URI)
+  .connect(process.env.MONGO_URI, {
+    serverSelectionTimeoutMS: 30000,
+    socketTimeoutMS: 45000,
+    connectTimeoutMS: 30000,
+    maxPoolSize: 10,
+    retryWrites: true,
+  })
   .then(() => {
     console.log("MongoDB connected");
     startFollowUpScheduler();
